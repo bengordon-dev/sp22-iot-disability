@@ -20,7 +20,7 @@ char* convert_int16_to_str(int16_t i) { // converts int16 to string. Moreover, r
 }
 
 double acc_x, acc_y, acc_z;
-double angle;
+double horizontal_hypot, angle;
 
 
 void setup() {
@@ -58,13 +58,14 @@ void loop() {
   Serial.print(" | aY = "); Serial.print(convert_int16_to_str(accelerometer_y));
   Serial.print(" | aZ = "); Serial.print(convert_int16_to_str(accelerometer_z));
 
-
-  Serial.print(" | Hypot (y, z) = "); Serial.print(hypot(acc_y, acc_z));
-  angle = atan2(hypot(acc_y, acc_z), acc_x)*180/M_PI;
+  // math: find the angle the "cane" is pointing (relative to straight down)
+  horizontal_hypot = hypot(acc_y, acc_z);  // find the net horizontal acceleration
+  Serial.print(" | Hypot (y, z) = "); Serial.print(horizontal_hypot);
+  angle = atan2(horizontal_hypot, acc_x)*180/M_PI; // find the angle between vertical acceleration and net horizontal acceleration
   Serial.print(" | Angle: = "); Serial.print(angle);
   Serial.println();
 
-  if (fabs(angle) <= 15.0) {
+  if (fabs(angle) <= 15.0) { // if pointing down enough (angle < 15 degrees), ping the distance sensor
     int distance = sonar.ping_cm();   
     Serial.print("Distance: ");
     Serial.print(distance);
@@ -73,7 +74,4 @@ void loop() {
       Serial.println("Angle too high");
   }
   
-  
-  // delay
-  //delay(1000);
 }
