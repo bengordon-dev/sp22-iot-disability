@@ -9,101 +9,155 @@
   copies or substantial portions of the Software.
 */
 
-#include <esp_now.h>
-#include <WiFi.h>
 
+// HC SR-04 ultrasonic distance sensor variables/imports 
 #define TRIGGER_PIN  19
 #define ECHO_PIN     23
-#define MAX_DISTANCE 400 // Maximum distance we want to measure (in centimeters).
-#include <NewPing.h> // Used for the HC SR-04 ultrasonic sensor
+#define MAX_DISTANCE 400 
+#include <NewPing.h> 
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE); // NewPing setup of pins and maximum distance.
 
+// Accelerometer/gyroscope module 
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
-
 Adafruit_MPU6050 mpu;
+sensors_event_t a, g, temp;
 
 
+// Two-way commnuication
+#include <esp_now.h>
+#include <WiFi.h>
+uint8_t broadcastAddress[] = {0x0C, 0xB8, 0x15, 0xC3, 0x30, 0x00}; 
 
-// REPLACE WITH YOUR RECEIVER MAC Address
-uint8_t broadcastAddress[] = {0x0C, 0xB8, 0x15, 0xC3, 0x30, 0x00};
-
-// Structure example to send data
-// Must match the receiver structure
+// Struct for data packets sent wirelessly 
 typedef struct struct_message {
-  char a[32];
-  int b;
-  float c;
-  bool d;
+  char str[32];
+  int dist;
+  float angle;
+  bool cal;
 } struct_message;
 
-// Create a struct_message called myData
 struct_message myData;
-
 esp_now_peer_info_t peerInfo;
+
+
+typedef struct offset_struct {
+  float x;
+  float y;
+  float z;
+} offset_t;
+
+offset_t offsets;
+
+bool calibrating;
 
 // callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   Serial.print("\r\nLast Packet Send Status:\t");
   Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
+
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  calibrating = true;
+  memcpy(&myData, incomingData, sizeof(myData));
+  calibrating = myData.cal; // should be true
+  if (calibrating) {
+    delay(4000); // give user some time to stand their cane straight up
+    calibrateAccel(50);
+  }
+  
+}
+
+void clearOffsets() {
+  offsets.x = 0;
+  offsets.y = 0;
+  offsets.z = 0;
+}
+
+void calibrateAccel(int measurements) { // recommended measurements = 50
+  Serial.println("Calibrating now. POINT ULTRASONIC SENSOR STRAIGHT DOWN.");
+  delay(500);
+  
+  float x = 0, y = 0, z = 0; // do not update offsets until value is calculated
+  for (int i = 0; i < measurements; i++) { 
+    mpu.getEvent(&a, &g, &temp); // take a measurement
+    x += a.acceleration.x; y += a.acceleration.y; z += a.acceleration.z; 
+    delay(100); 
+  }
+  
+  x /= measurements; y /= measurements; z /= measurements;  // turn sums into averages 
+  x += 9.81; // presumed to be the vertical downward direction 
+  offsets.x = x; offsets.y = y; offsets.z = z; // update state 
+  Serial.println("Done calibrating");
+  
+  myData.angle = 90.0; // write fake values that will not turn on motor
+  myData.dist = 0;
+  myData.cal = false; // resume normal loop operation on UI
+  esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+  calibrating = false; // resume normal loop opoeration on 
+
+}
+
+// Uses trig to calculate the angle between the cane's orientation and straight down 
+float angle(float vert, float hor1, float hor2) {
+    return atan2(hypot(hor1, hor2), -1*vert)*180.0/PI;
+}
+
+// uses measurement and offsets global variables 
+float angleWithOffsets() {
+  return angle(a.acceleration.x - offsets.x, a.acceleration.y - offsets.y, 
+               a.acceleration.z - offsets.z);
+}
  
 void setup() {
-  // Init Serial Monitor
   Serial.begin(9600);
-   if (!mpu.begin()) {
+  
+   if (!mpu.begin()) { // error handling for accelerometer 
     Serial.println("Failed to find MPU6050 chip");
     while (1) {
       delay(10);
     }
   }
- 
-  // Set device as a Wi-Fi Station
-  WiFi.mode(WIFI_STA);
-  Serial.println(WiFi.macAddress());
-  // Init ESP-NOW
-  if (esp_now_init() != ESP_OK) {
+
+  // ESP-NOW communication setup
+  WiFi.mode(WIFI_STA); // Set device as a Wi-Fi Station
+  if (esp_now_init() != ESP_OK) {  // Initialize ESP-NOW, handle errors
     Serial.println("Error initializing ESP-NOW");
     return;
   }
 
-  // Once ESPNow is successfully Init, we will register for Send CB to
-  // get the status of Trasnmitted packet
-  esp_now_register_send_cb(OnDataSent);
+  esp_now_register_send_cb(OnDataSent); // bind the OnDataSent callback
   
-  // Register peer
+  // Register the other ESP32 as a peer
   memcpy(peerInfo.peer_addr, broadcastAddress, 6);
   peerInfo.channel = 0;  
-  peerInfo.encrypt = false;
-  
-  // Add peer        
+  peerInfo.encrypt = false;       
   if (esp_now_add_peer(&peerInfo) != ESP_OK){
-    Serial.println("Failed to add peer");
+    Serial.println("Failed to add peer"); // handle errors
     return;
   }
+
+  esp_now_register_recv_cb(OnDataRecv); // bind the OnDataRecv callback
 }
  
 void loop() {
-  // Set values to send
-  strcpy(myData.a, "THIS IS A CHAR");
-  myData.b = sonar.ping_cm(); 
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-  float nonvert = hypot(a.acceleration.z, a.acceleration.y);
-  float angle = atan2(nonvert, -1*a.acceleration.x)*180/PI;
-  
-  myData.c = angle;
-  myData.d = false;
-  
-  // Send message via ESP-NOW
-  esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
-   
-  if (result == ESP_OK) {
-    Serial.println("Sent with success");
+  if (!calibrating) { 
+    myData.cal = false;
+
+    // take measurements
+    myData.dist = sonar.ping_cm(); 
+    mpu.getEvent(&a, &g, &temp);
+    myData.angle = angleWithOffsets();
+    
+    // Send message via ESP-NOW, handle errors 
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+    if (result == ESP_OK) {
+      Serial.println("Sent with success");
+    }
+    else {
+      Serial.println("Error sending the data");
+    }
   }
-  else {
-    Serial.println("Error sending the data");
-  }
-  delay(500);
+  delay(50);
 }
