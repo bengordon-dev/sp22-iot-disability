@@ -17,12 +17,18 @@
 #include <NewPing.h> 
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE); // NewPing setup of pins and maximum distance.
 
+#define SECOND_TRIGGER 32
+#define SECOND_ECHO 33
+NewPing secondSensor(SECOND_TRIGGER, SECOND_ECHO, MAX_DISTANCE);
+
 // Accelerometer/gyroscope module 
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 Adafruit_MPU6050 mpu;
 sensors_event_t a, g, temp;
+#include <EEPROM.h>
+#define EEPROM_SIZE 1
 
 
 // Two-way commnuication
@@ -54,8 +60,8 @@ bool calibrating;
 
 // callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+  //Serial.print("\r\nLast Packet Send Status:\t");
+  //Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -94,8 +100,18 @@ void calibrateAccel(int measurements) { // recommended measurements = 50
   myData.angle = 90.0; // write fake values that will not turn on motor
   myData.dist = 0;
   myData.cal = false; // resume normal loop operation on UI
-  esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+  esp_err_t result = (broadcastAddress, (uint8_t *) &myData, sizeof(myData));
   calibrating = false; // resume normal loop opoeration on 
+
+  Serial.println("Reaadings: " + String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
+
+  offset_t old_offsets;
+  EEPROM.get(0, old_offsets);
+  Serial.println("Old offsets: " + String(old_offsets.x) + " " + String(old_offsets.y) + " " + String(old_offsets.z));
+  EEPROM.put(0, offsets);
+  EEPROM.commit();
+  EEPROM.get(0, offsets);
+  Serial.println("New offsets: " + String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
 
 }
 
@@ -103,7 +119,6 @@ void calibrateAccel(int measurements) { // recommended measurements = 50
 float angle(float vert, float hor1, float hor2) {
     return atan2(hypot(hor1, hor2), -1*vert)*180.0/PI;
 }
-
 // uses measurement and offsets global variables 
 float angleWithOffsets() {
   return angle(a.acceleration.x - offsets.x, a.acceleration.y - offsets.y, 
@@ -119,6 +134,7 @@ void setup() {
       delay(10);
     }
   }
+  EEPROM.begin(EEPROM_SIZE);
 
   // ESP-NOW communication setup
   WiFi.mode(WIFI_STA); // Set device as a Wi-Fi Station
@@ -139,6 +155,10 @@ void setup() {
   }
 
   esp_now_register_recv_cb(OnDataRecv); // bind the OnDataRecv callback
+
+  Serial.println(EEPROM.read(0));
+   EEPROM.get(0, offsets);
+   Serial.println(String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
 }
  
 void loop() {
@@ -146,17 +166,26 @@ void loop() {
     myData.cal = false;
 
     // take measurements
-    myData.dist = sonar.ping_cm(); 
     mpu.getEvent(&a, &g, &temp);
     myData.angle = angleWithOffsets();
+
+    if (myData.angle <= 15) {
+      myData.dist = sonar.ping_cm(); 
+    } else if (myData.angle >= 165) {
+      myData.dist = secondSensor.ping_cm();
+      Serial.println(myData.dist); 
+    } else {
+      //myData.dist = 0;
+    }
+
     
     // Send message via ESP-NOW, handle errors 
     esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
     if (result == ESP_OK) {
-      Serial.println("Sent with success");
+      //Serial.println("Sent with success");
     }
     else {
-      Serial.println("Error sending the data");
+      //Serial.println("Error sending the data");
     }
   }
   delay(50);

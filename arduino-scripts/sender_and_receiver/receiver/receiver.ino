@@ -137,7 +137,7 @@ void loop() {
       else {
         Serial.println("Error sending the data");
       }
-    } else if (myData.angle <= 30 && myData.dist > 0) { // write to motor output
+    } else if ((myData.angle <= 15 || myData.angle >= 165)  && myData.dist > 0) { // write to motor output
        // delay: 100 to 10
       sendDelayIntensity(delayFunc(myData.dist), intensityFunc(myData.dist), 1, false);
     }
