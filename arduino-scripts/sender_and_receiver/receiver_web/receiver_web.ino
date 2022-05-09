@@ -12,6 +12,15 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
+#include <Arduino_JSON.h>
+#include "ESPAsyncWebServer.h"
+
+const char* ssid = "utexas-iot";
+const char* password = "69682161509391057074";
+
+JSONVar board;
+AsyncWebServer server(80);
+AsyncEventSource events("/events");
 
 // Struct for data packets sent wirelessly 
 typedef struct struct_message {
@@ -77,7 +86,7 @@ int delayFunc(float dist) {
 }
 
 int intensityFunc(float dist) {
-  if (dist <= 5) {
+  if (dist <= 1) {
     return 0;
   }
   double out = 200.0 + 55.0/20.0*sqrt((double) dist);
@@ -100,11 +109,11 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   }
   calibrating = myData.cal; // resume loop operation after calibration
   
-  Serial.println("Distance: " + String(myData.dist) + " cm");
-  Serial.println("Angle to vertical: " + String(myData.angle) + " degrees");
-  if (calibrating) {
-     Serial.println("Calibrating");
-  }
+  //Serial.println("Distance: " + String(myData.dist) + " cm");
+  //Serial.println("Angle to vertical: " + String(myData.angle) + " degrees");
+  //if (calibrating) {
+    // Serial.println("Calibrating");
+  //}
 }
 
 // called upon sending a packet to the other ESP
@@ -140,13 +149,54 @@ void setup() {
   
   esp_now_register_recv_cb(OnDataRecv); // bind the OnDataRecv callback
 
-  sendWaveform(pulse, 8, 100, 3);   
-  calibrating = false;
+  sendWaveform(pulse, 8, 100, 3);
+
+  // Connect to Wi-Fi network with SSID and password
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  // Print local IP address and start web server
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("Wi-Fi Channel: ");
+  Serial.println(WiFi.channel());
+
+  //server.enableCORS();
+  //server.on("/read", handleRead);
+  server.on("/read", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{\"distance\": " + String(myData.dist) + ", \"angle\": " + String(myData.angle) + "}";
+    
+    request->send_P(200, "text/json", json.c_str());
+  });
+
+  events.onConnect([](AsyncEventSourceClient *client){
+    if(client->lastId()){
+      Serial.printf("Client reconnected! Last message ID that it got is: %u\n", client->lastId());
+    }
+    // send event with message "hello!", id current millis
+    // and set reconnect delay to 1 second
+    client->send("hello!", NULL, millis(), 10000);
+  });
+  server.addHandler(&events);
+   
+  
+  //calibrating = false;
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  server.begin();
 
 
   
 }
 
+//void handleRead() {
+  //server.send(200, "text/json", "{\"distance\": " + String(myData.dist) + ", \"angle\": " + String(myData.angle) + "}"); 
+//}
 
 
 void loop() {
@@ -162,9 +212,10 @@ void loop() {
       else {
         Serial.println("Error sending the data");
       }
-    } else if ((myData.angle <= 60)  && myData.dist > 5) { // write to motor output
+    } else if ((myData.angle <= 60)  && myData.dist > 1) { // write to motor output
        // delay: 100 to 10
       sendDelayIntensity(delayFunc(myData.dist), intensityFunc(myData.dist), 1, false);
     }
+    //server.handleClient();
   }
 }

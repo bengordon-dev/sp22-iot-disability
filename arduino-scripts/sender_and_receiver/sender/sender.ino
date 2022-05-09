@@ -13,7 +13,7 @@
 // HC SR-04 ultrasonic distance sensor variables/imports 
 #define TRIGGER_PIN  19
 #define ECHO_PIN     23
-#define MAX_DISTANCE 400 
+#define MAX_DISTANCE 450  
 #include <NewPing.h> 
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE); // NewPing setup of pins and maximum distance.
 
@@ -28,7 +28,7 @@ NewPing secondSensor(SECOND_TRIGGER, SECOND_ECHO, MAX_DISTANCE);
 Adafruit_MPU6050 mpu;
 sensors_event_t a, g, temp;
 #include <EEPROM.h>
-#define EEPROM_SIZE 1
+#define EEPROM_SIZE 16
 
 
 // Two-way commnuication
@@ -38,8 +38,8 @@ uint8_t broadcastAddress[] = {0x0C, 0xB8, 0x15, 0xC3, 0x30, 0x00};
 
 // Struct for data packets sent wirelessly 
 typedef struct struct_message {
-  char str[32];
-  int dist;
+  char str;
+  float dist;
   float angle;
   bool cal;
 } struct_message;
@@ -52,11 +52,21 @@ typedef struct offset_struct {
   float x;
   float y;
   float z;
+  float dist;
 } offset_t;
 
 offset_t offsets;
 
-bool calibrating;
+float ping_cm_float(NewPing sensor) {
+  int micro_seconds = sensor.ping(450);
+  float distance_cm = micro_seconds * 343 * 50 / ((float) 1000000);
+  //Serial.println("microseconds: + " + String(micro_seconds));
+  //int newping = sensor.ping_cm();
+  //Serial.println("Us: " + String(distance_cm) + ", Them: " + String(newping));
+  return distance_cm;
+}
+
+bool calibrating ;
 
 // callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -79,6 +89,7 @@ void clearOffsets() {
   offsets.x = 0;
   offsets.y = 0;
   offsets.z = 0;
+  offsets.dist = 0;
 }
 
 void calibrateAccel(int measurements) { // recommended measurements = 50
@@ -93,26 +104,43 @@ void calibrateAccel(int measurements) { // recommended measurements = 50
   }
   
   x /= measurements; y /= measurements; z /= measurements;  // turn sums into averages 
-  x += 9.81; // presumed to be the vertical downward direction 
+  //x += 9.81; // presumed to be the vertical downward direction 
   offsets.x = x; offsets.y = y; offsets.z = z; // update state 
-  Serial.println("Done calibrating");
+  offsets.dist = 0;
+  Serial.println("Done calibrating accelerometer");
   
   myData.angle = 90.0; // write fake values that will not turn on motor
   myData.dist = 0;
-  myData.cal = false; // resume normal loop operation on UI
+  myData.str = 'A';
+  myData.cal = true; // resume normal loop operation on UI
   esp_err_t result = (broadcastAddress, (uint8_t *) &myData, sizeof(myData));
-  calibrating = false; // resume normal loop opoeration on 
+  calibrating = true; // resume normal loop opoeration on 
 
   Serial.println("Reaadings: " + String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
 
-  offset_t old_offsets;
-  EEPROM.get(0, old_offsets);
-  Serial.println("Old offsets: " + String(old_offsets.x) + " " + String(old_offsets.y) + " " + String(old_offsets.z));
   EEPROM.put(0, offsets);
   EEPROM.commit();
-  EEPROM.get(0, offsets);
-  Serial.println("New offsets: " + String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
+  calibrateDistanceSensor(50);
+}
 
+void calibrateDistanceSensor(int measurements) {
+
+  float distSum = 0;
+  for (int i = 0; i < measurements; i++) {
+    distSum += ping_cm_float(secondSensor);
+    delay(100);
+  }
+  distSum /= measurements;
+  
+  offsets.dist = distSum;
+  Serial.println("Offsets.dist: + " + String(offsets.dist));
+  delay(500);
+  myData.str = 'D'; // "done"
+  myData.cal = false; // resume normal loop operation on UI
+  esp_err_t result = (broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+  EEPROM.put(0, offsets);
+  EEPROM.commit();
+  calibrating = false; // resume normal loop opoeration on 
 }
 
 // Uses trig to calculate the angle between the cane's orientation and straight down 
@@ -123,6 +151,18 @@ float angle(float vert, float hor1, float hor2) {
 float angleWithOffsets() {
   return angle(a.acceleration.x - offsets.x, a.acceleration.y - offsets.y, 
                a.acceleration.z - offsets.z);
+}
+
+// agnostic to vertical direction and Velcro problems.
+float angleBetweenVectors() {
+  float offmag = hypot(hypot(offsets.x, offsets.y), offsets.z);
+  if (offmag == 0.0) {
+     return angle(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+  }
+  float amag = hypot(hypot(a.acceleration.x, a.acceleration.y), a.acceleration.z);
+  float dotproduct = a.acceleration.x*offsets.x + a.acceleration.y*offsets.y 
+                  + a.acceleration.z*offsets.z;
+  return acos(dotproduct/amag/offmag)*180/PI;
 }
  
 void setup() {
@@ -159,33 +199,36 @@ void setup() {
   Serial.println(EEPROM.read(0));
    EEPROM.get(0, offsets);
    Serial.println(String(offsets.x) + " " + String(offsets.y) + " " + String(offsets.z));
+  calibrating = false;
 }
  
 void loop() {
   if (!calibrating) { 
     myData.cal = false;
+    myData.str = 'N'; // "normal"
 
     // take measurements
     mpu.getEvent(&a, &g, &temp);
-    myData.angle = angleWithOffsets();
-
-    if (myData.angle <= 15) {
-      myData.dist = sonar.ping_cm(); 
-    } else if (myData.angle >= 165) {
-      myData.dist = secondSensor.ping_cm();
+    myData.angle = angleBetweenVectors();
+    Serial.println(myData.angle);
+    if (myData.angle <= 30) {
+      myData.dist = ping_cm_float(secondSensor) - (offsets.dist*cos(myData.angle*PI/180)); 
+      Serial.println(myData.dist); 
+    } else if (myData.angle <= 60) {
+      myData.dist = ping_cm_float(sonar) - ((offsets.dist + 13.0)*cos(myData.angle*PI/180));
       Serial.println(myData.dist); 
     } else {
-      //myData.dist = 0;
+      myData.dist = 0;
     }
 
     
     // Send message via ESP-NOW, handle errors 
     esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
     if (result == ESP_OK) {
-      //Serial.println("Sent with success");
+      Serial.println("Sent with success");
     }
     else {
-      //Serial.println("Error sending the data");
+      Serial.println("Error sending the data");
     }
   }
   delay(50);

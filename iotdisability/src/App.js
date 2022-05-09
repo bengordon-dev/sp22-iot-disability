@@ -1,6 +1,7 @@
 import logo from './logo.svg';
 import './App.css';
 import React, {useState, useEffect, useRef} from "react";
+import Graph from './Graph';
 
 function useInterval(callback, delay) {
   const savedCallback = useRef();
@@ -22,16 +23,23 @@ function useInterval(callback, delay) {
   }, [delay]);
 }
 
+function delayFunc(dist) {
+  let freq = 10.0 + 1.40625*Math.pow(dist/30.0, 1.8);
+  return 2000.0/freq;
+}
+
+const ip = "10.145.22.28:80"
+
 function App() {
   const [readings, setReadings] = useState([]);
   const [getReadings, setGetReadings] = useState(false);
 
   function fetchReadings(oldReadings) {
-    fetch("http://10.148.110.39:3000/read").then(response => response.json()).then(response => {setReadings([...oldReadings, response])})  
+    fetch(`http://${ip}/read`).then(response => response.json()).then(response => {setReadings([...oldReadings, response])})  
   }
 
   function fetchReadingsTimed(oldState) {
-    fetch("http://10.148.110.39:3000/read").then(response => response.json()).then(response => setReadings([...oldState, response])) 
+    fetch(`http://${ip}/read`).then(response => response.json()).then(response => setReadings([...oldState, response])) 
     .then(response => setTimeout(() => fetchReadingsTimed([...oldState, response]), 1000)) 
   }
 
@@ -52,20 +60,70 @@ function App() {
         <p>
           Readings
         </p>
-        <svg height={"400px"}
+
+        <div className="graphRow">
+          <Graph width={700} height={350} lines={11} title="Distance (cm)" maxVal={200} mb={20} color="green" 
+          readings={readings} func={(reading) => (Math.max(0, reading.distance))}/>
+        
+          {<Graph width={700} height={350} lines={10} title="Angle (degrees)" maxVal={180} mb={20} color="red" 
+          readings={readings} func={(reading) => (reading.angle)}/>}
+        </div>
+
+        <div className="graphRow">
+          {<Graph width={700} height={350} lines={10} title="log2(Distance in cm)" maxVal={9} mb={20} color="green" 
+          readings={readings} func={(reading) => (Math.log2(Math.max(reading.distance, 1)))}/>}
+        
+          <Graph width={700} height={350} lines={11} title="Motor Delay (ms)" maxVal={200} mb={20} color="blue" 
+          readings={readings} func={(reading) => (delayFunc(Math.max(0, reading.distance)))}/>
+        </div>
+
+        {/*<svg height={"425px"}
           style={{strokeLineJoin: "round", stroke: "#000", fill: "none", backgroundColor: "white", marginBottom: 50}}
           width={`${875}px`}
           id="svg">
-            <line x1="50" y1="200" x2="850" y2="200" stroke="black" strokeWidth="2" />
-            <text x="15" y="205" fill="black" fontSize={20}>90</text>
-            <line x1="50" y1="20" x2="850" y2="20" stroke="black" strokeWidth="2" />
-            <text x="10" y="25" fill="black" fontSize={20}>180</text>
-            <line x1="50" y1="380" x2="850" y2="380" stroke="black" strokeWidth="2" />
-            <text x="20" y="385" fill="black" fontSize={20}>0</text>
+            <text x="400" y="30" fill="black" fontsize={24}>Angle</text>
+            <line x1="50" y1="225" x2="850" y2="225" stroke="black" strokeWidth="2" />
+            <text x="15" y="230" fill="black" fontSize={20}>90</text>
+            <line x1="50" y1="45" x2="850" y2="45" stroke="black" strokeWidth="2" />
+            <text x="10" y="50" fill="black" fontSize={20}>180</text>
+            <line x1="50" y1="405" x2="850" y2="405" stroke="black" strokeWidth="2" />
+            <text x="20" y="410" fill="black" fontSize={20}>0</text>
             {readings && readings.slice(-32).map((reading, i) => (
-              <circle key={i} cx={`${70 + 25*i}`} cy={`${380 - 2*reading.angle}`} r="5" stroke="black" strokeWidth="1" fill="red" />
+              <circle key={i} cx={`${70 + 25*i}`} cy={`${405 - 2*reading.angle}`} r="5" stroke="black" strokeWidth="1" fill="red" />
             ))}
         </svg>
+
+        <svg height={"425px"}
+          style={{strokeLineJoin: "round", stroke: "#000", fill: "none", backgroundColor: "white", marginBottom: 50}}
+          width={`${875}px`}
+          id="svg">
+            <text x="400" y="30" fill="black" fontsize={24}>Motor delay </text>
+            <line x1="50" y1="45" x2="850" y2="45" stroke="black" strokeWidth="2" />
+            <text x="10" y="50" fill="black" fontSize={20}>200</text>
+            <line x1="50" y1="225" x2="850" y2="225" stroke="black" strokeWidth="2" />
+            <text x="15" y="230" fill="black" fontSize={20}>100</text>
+            <line x1="50" y1="405" x2="850" y2="405" stroke="black" strokeWidth="2" />
+            <text x="20" y="410" fill="black" fontSize={20}>0</text>
+            {readings && readings.slice(-32).map((reading, i) => (
+              <circle key={i} cx={`${70 + 25*i}`} cy={`${405 - 1.8*delayFunc(Math.max(0, reading.distance))}`} r="5" stroke="black" strokeWidth="1" fill="blue" />
+            ))}
+        </svg>    
+
+        <svg height={"425px"}
+          style={{strokeLineJoin: "round", stroke: "#000", fill: "none", backgroundColor: "white", marginBottom: 50}}
+          width={`${875}px`}
+          id="svg">
+            <text x="400" y="30" fill="black" fontsize={24}>Distance</text>
+            <line x1="50" y1="45" x2="850" y2="45" stroke="black" strokeWidth="2" />
+            <text x="10" y="50" fill="black" fontSize={20}>450</text>
+            <line x1="50" y1="225" x2="850" y2="225" stroke="black" strokeWidth="2" />
+            <text x="15" y="230" fill="black" fontSize={20}>225</text>
+            <line x1="50" y1="405" x2="850" y2="405" stroke="black" strokeWidth="2" />
+            <text x="20" y="410" fill="black" fontSize={20}>0</text>
+            {readings && readings.slice(-32).map((reading, i) => (
+              <circle key={i} cx={`${70 + 25*i}`} cy={`${405 - 360/450*Math.max(0, reading.distance)}`} r="5" stroke="black" strokeWidth="1" fill="green" />
+            ))}
+        </svg>     
 
         <svg height={"400px"}
           style={{strokeLineJoin: "round", stroke: "#000", fill: "none", backgroundColor: "white", marginBottom: 50}}
@@ -102,9 +160,9 @@ function App() {
             <line x1="50" y1="380" x2="850" y2="380" stroke="black" strokeWidth="2" />
             <text x="10" y="384" fill="black" fontSize={16}>1</text>
             {readings && readings.slice(-32).map((reading, i) => (
-              <circle key={i} cx={`${70 + 25*i}`} cy={`${380 - 40*Math.log2(reading.distance + 1)}`} r="5" stroke="black" strokeWidth="1" fill="green" />
+              <circle key={i} cx={`${70 + 25*i}`} cy={`${380 - 40*Math.log2(Math.max(reading.distance, 1))}`} r="5" stroke="black" strokeWidth="1" fill="green" />
             ))}
-        </svg>
+            </svg>*/}
         
         <button onClick={() => fetchReadings(readings)}>Fetch one reading</button>
         {/*<button onClick={() => {
