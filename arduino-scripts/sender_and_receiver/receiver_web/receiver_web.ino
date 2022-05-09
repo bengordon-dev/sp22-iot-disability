@@ -16,7 +16,7 @@
 #include "ESPAsyncWebServer.h"
 
 const char* ssid = "utexas-iot";
-const char* password = "69682161509391057074";
+const char* password = "no lol";
 
 JSONVar board;
 AsyncWebServer server(80);
